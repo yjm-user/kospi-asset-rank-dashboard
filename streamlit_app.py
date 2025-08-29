@@ -70,7 +70,7 @@ st.markdown("""
 
 #######################
 # Load data
-df_reshaped = pd.read_excel('kospi_asset_rank_04-24.xlsx', engine="openpyxl") 
+df_reshaped = pd.read_excel('kospi_asset_rank_04-24.xlsx', engine="openpyxl")
 
 #######################
 # Sidebar
@@ -83,7 +83,7 @@ with st.sidebar:
 
     # 회사 선택
     companies = df_reshaped["회사명"].dropna().unique()
-    selected_companies = st.multiselect("회사 선택", companies, default=companies[:5])
+    selected_companies = st.multiselect("회사 선택", companies, default=[])
 
     # 재무지표 선택
     metrics = ["자산총계", "부채총계", "자본총계", "매출액", "영업이익", "당기순이익"]
@@ -102,46 +102,74 @@ with col[0]:
     # 연도별 데이터
     df_year = df_reshaped[df_reshaped["년도"] == selected_year]
 
-    # Top 회사
-    top_company = df_year.loc[df_year["자산총계"].idxmax()]
-    st.metric(
-        label=f"자산총계 1위 기업 ({selected_year})",
-        value=f"{top_company['회사명']} : {top_company['자산총계']:,} 억원"
-    )
+    if selected_companies:
+        df_selected = df_year[df_year["회사명"].isin(selected_companies)]
 
-    # 총 자산 규모
-    total_assets = df_year["자산총계"].sum()
-    st.metric("총 자산 규모", f"{total_assets:,} 억원")
+        for _, row in df_selected.iterrows():
+            # 회사별 주요 메트릭 카드
+            st.metric(
+                label=f"{row['회사명']} ({selected_year}) 총자산",
+                value=f"{row['자산총계']:,} 억원"
+            )
 
-    # 평균 영업이익률
-    df_year = df_year.copy()
-    df_year["영업이익률"] = df_year["영업이익"] / df_year["매출액"]
-    avg_op_margin = df_year["영업이익률"].mean(skipna=True)
-    st.metric("평균 영업이익률", f"{avg_op_margin:.2%}")
+            # 영업이익률
+            if pd.notna(row["매출액"]) and row["매출액"] != 0:
+                op_margin = row["영업이익"] / row["매출액"]
+                st.metric(
+                    label=f"{row['회사명']} 평균 영업이익률",
+                    value=f"{op_margin:.2%}"
+                )
 
-    # 흑자 기업 비율
-    positive_ratio = (df_year["당기순이익"] > 0).mean()
-    st.metric("흑자 기업 비율", f"{positive_ratio:.2%}")
+            # 흑자 여부
+            profit_status = "흑자" if row["당기순이익"] > 0 else "적자"
+            st.metric(
+                label=f"{row['회사명']} 당기순이익",
+                value=f"{row['당기순이익']:,} 억원",
+                delta=profit_status
+            )
+            st.markdown("---")
+
+    else:
+        # 회사 선택 안 하면 기존 요약 지표 보여줌
+        top_company = df_year.loc[df_year["자산총계"].idxmax()]
+        st.metric(
+            label=f"자산총계 1위 기업 ({selected_year})",
+            value=f"{top_company['회사명']} : {top_company['자산총계']:,} 억원"
+        )
+
+        total_assets = df_year["자산총계"].sum()
+        st.metric("총 자산 규모", f"{total_assets:,} 억원")
+
+        df_year = df_year.copy()
+        df_year["영업이익률"] = df_year["영업이익"] / df_year["매출액"]
+        avg_op_margin = df_year["영업이익률"].mean(skipna=True)
+        st.metric("평균 영업이익률", f"{avg_op_margin:.2%}")
+
+        positive_ratio = (df_year["당기순이익"] > 0).mean()
+        st.metric("흑자 기업 비율", f"{positive_ratio:.2%}")
 
 with col[1]:
     st.subheader("📊 Main Visualizations")
 
-    df_year = df_reshaped[df_reshaped["년도"] == selected_year]
+    df_year = df_reshaped[df_reshaped["년도"] == selected_year].copy()
 
-    # 자산총계 Top 10
-    top10_assets = df_year.nlargest(10, "자산총계")
+    # 선택한 재무지표를 숫자형으로 안전 변환(정렬/색상 계산 안정성)
+    df_year[selected_metric] = pd.to_numeric(df_year[selected_metric], errors="coerce")
+
+    # 선택 지표 Top 10
+    top10_metric = df_year.nlargest(10, selected_metric)
 
     bar_chart = px.bar(
-        top10_assets,
+        top10_metric,
         x="회사명",
-        y="자산총계",
-        title=f"{selected_year}년 자산총계 Top 10",
-        color="자산총계",
+        y=selected_metric,
+        title=f"{selected_year}년 {selected_metric} Top 10",
+        color=selected_metric,
         color_continuous_scale=color_theme
     )
     st.plotly_chart(bar_chart, use_container_width=True)
 
-    # 자산총계 vs 영업이익 산점도
+    # 산점도는 기존 유지(자산총계 vs 영업이익)
     scatter = px.scatter(
         df_year,
         x="자산총계",
@@ -159,9 +187,8 @@ with col[2]:
 
     df_year = df_reshaped[df_reshaped["년도"] == selected_year]
 
-    # Top 10 기업 랭킹 (순위 1부터 시작)
     top10_table = df_year.nlargest(10, "자산총계")[["회사명", "자산총계", "영업이익", "당기순이익"]].reset_index(drop=True)
-    top10_table.index = top10_table.index + 1  # 순위 1부터
+    top10_table.index = top10_table.index + 1
     top10_table.index.name = "순위"
 
     st.markdown(f"**{selected_year}년 자산총계 Top 10 기업**")
@@ -171,7 +198,6 @@ with col[2]:
         "당기순이익": "{:,}"
     }))
 
-    # 데이터 설명
     st.markdown("---")
     st.subheader("ℹ️ About Data")
     st.write("""
@@ -181,6 +207,5 @@ with col[2]:
     - **매출액**: 일정 기간 동안 벌어들인 총 매출  
     - **영업이익**: 본업에서 발생한 이익  
     - **당기순이익**: 최종 손익 (세금 등 반영 후)  
-
-    데이터 출처: 금융감독원/거래소 공시 자료 기반  
+    데이터 출처: 금융감독원/거래소 공시 자료 기반
     """)
